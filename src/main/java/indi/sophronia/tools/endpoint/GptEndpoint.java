@@ -7,7 +7,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 
-public class GptEndpoint implements TranslationApiEndpoint {
+public class GptEndpoint extends TranslationApiEndpoint {
     private String apiKey;
 
     @Override
@@ -17,15 +17,15 @@ public class GptEndpoint implements TranslationApiEndpoint {
     }
 
     @Override
-    public String translate(String source) throws IOException {
+    protected String doTranslate(String source) throws IOException {
         Map<String, Object> requestBody = new HashMap<>();
-        requestBody.put("model", "text-davinci-003");
+        requestBody.put("model", "text-davinci-001");
         requestBody.put("max_tokens", 256);
         requestBody.put("temperature", 0.5f);
         requestBody.put("top_p", 1);
         requestBody.put("n", 1);
         requestBody.put("stream", false);
-        requestBody.put("prompt", "source");
+        requestBody.put("prompt", "please translate the following text to Chinese: " + source);
         Map<String, Object> response = RPC.post(
                 "https://api.openai.com/v1/completions",
                 Map.of("Authorization", "Bearer " + apiKey),

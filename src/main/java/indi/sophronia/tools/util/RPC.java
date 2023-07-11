@@ -5,18 +5,39 @@ import okhttp3.*;
 
 import java.io.IOException;
 import java.lang.reflect.Type;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
 public class RPC {
     private static final Gson gson = new Gson();
 
-    private static final OkHttpClient okHttpClient = new OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .writeTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .callTimeout(60, TimeUnit.SECONDS)
-            .build();
+    private static OkHttpClient okHttpClient;
+
+    public static void init(Properties properties) {
+        Proxy proxy;
+        String proxyPort = properties.getProperty("proxy.port");
+        if (proxyPort != null) {
+            proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(InetAddress.getLoopbackAddress(), Integer.parseInt(proxyPort)));
+        } else {
+            proxy = null;
+        }
+
+        OkHttpClient.Builder builder = new OkHttpClient.Builder()
+                .connectTimeout(3, TimeUnit.SECONDS)
+                .writeTimeout(3, TimeUnit.SECONDS)
+                .readTimeout(3, TimeUnit.SECONDS)
+                .callTimeout(3, TimeUnit.SECONDS);
+
+        if (proxy != null) {
+            builder.proxy(proxy);
+        }
+
+        okHttpClient = builder.build();
+    }
 
     public static <T> T post(String url,
                              Map<String, String> headers,

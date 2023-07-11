@@ -8,6 +8,7 @@ import indi.sophronia.tools.util.PackageScan;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
@@ -26,7 +27,7 @@ public class TranslationOutput extends OutputStream {
         Class<?>[] classes = PackageScan.getClassesByPackageName(
                 TranslationApiEndpoint.class.getPackageName(),
                 klass ->
-                        !klass.isInterface() &&
+                        !Modifier.isAbstract(klass.getModifiers()) &&
                                 TranslationApiEndpoint.class.isAssignableFrom(klass)
         );
 
@@ -85,6 +86,7 @@ public class TranslationOutput extends OutputStream {
                     break;
                 }
             } catch (IOException e) {
+                endpoint.onFail();
                 System.err.println(e.getMessage());
                 e.printStackTrace();
             }
@@ -94,6 +96,7 @@ public class TranslationOutput extends OutputStream {
             cache.save(data, translated, TimeUnit.MINUTES.toMillis(1));
             System.out.println(translated);
         } else {
+            System.err.println("fail to translate " + data);
             System.out.println(data);
         }
     }
