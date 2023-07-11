@@ -1,5 +1,7 @@
 package indi.sophronia.tools.output;
 
+import indi.sophronia.tools.cache.impl.BufferedCache;
+import indi.sophronia.tools.cache.impl.FileCache;
 import indi.sophronia.tools.endpoint.TranslationApiEndpoint;
 import indi.sophronia.tools.util.PackageScan;
 
@@ -9,9 +11,18 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 public class TranslationOutput extends OutputStream {
     public TranslationOutput(Properties properties) throws IOException {
+        FileCache fileCache = new FileCache(
+                properties.getProperty("cache.file", "cache.db")
+        );
+        this.cache.setUpstream(fileCache);
+        this.cache.setRecycleBin(fileCache);
+        this.cache.setAsyncUpdateUpstream(true);
+        this.cache.init();
+
         Class<?>[] classes = PackageScan.getClassesByPackageName(
                 TranslationApiEndpoint.class.getPackageName(),
                 klass ->
@@ -35,12 +46,20 @@ public class TranslationOutput extends OutputStream {
                 e.printStackTrace();
             }
         }
-        endpoints = translationApiEndpoints.toArray(new TranslationApiEndpoint[0]);
+        this.endpoints = translationApiEndpoints.toArray(new TranslationApiEndpoint[0]);
     }
+
+    private final BufferedCache cache = new BufferedCache();
 
     private final StringBuilder buffer = new StringBuilder(1024);
 
     private final TranslationApiEndpoint[] endpoints;
+
+    @Override
+    public void close() throws IOException {
+        this.cache.destroy();
+        super.close();
+    }
 
     @Override
     public void write(int b) {
@@ -52,7 +71,11 @@ public class TranslationOutput extends OutputStream {
         String data = buffer.toString();
         buffer.delete(0, buffer.length());
 
-        // todo load from cache first
+        String cached = cache.load(data);
+        if (cached != null) {
+            System.out.println(cached);
+            return;
+        }
 
         String translated = null;
         for (TranslationApiEndpoint endpoint : endpoints) {
@@ -68,8 +91,7 @@ public class TranslationOutput extends OutputStream {
         }
 
         if (translated != null) {
-            // todo save results
-
+            cache.save(data, translated, TimeUnit.MINUTES.toMillis(1));
             System.out.println(translated);
         } else {
             System.out.println(data);

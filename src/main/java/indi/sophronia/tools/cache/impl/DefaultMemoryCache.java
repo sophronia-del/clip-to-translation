@@ -1,6 +1,7 @@
 package indi.sophronia.tools.cache.impl;
 
 import indi.sophronia.tools.cache.CacheFacade;
+import indi.sophronia.tools.cache.RecycleBin;
 
 import java.util.*;
 import java.util.concurrent.*;
@@ -24,18 +25,22 @@ public class DefaultMemoryCache implements CacheFacade {
     }
 
     public DefaultMemoryCache() {
-        this.recycleBin = new EmptyCache();
+        this.recycleBin = RecycleBin.empty();
         this.init = new AtomicBoolean(false);
         this.destroy = new AtomicBoolean(false);
         this.memoryCache = new ConcurrentHashMap<>();
         this.cacheCleaner = Executors.newSingleThreadScheduledExecutor();
     }
 
-    private CacheFacade recycleBin;
+    private RecycleBin recycleBin;
     private final AtomicBoolean init;
     private final AtomicBoolean destroy;
     private final ConcurrentMap<String, CachedEntry> memoryCache;
     private final ScheduledExecutorService cacheCleaner;
+
+    public void setRecycleBin(RecycleBin recycleBin) {
+        this.recycleBin = recycleBin;
+    }
 
     @Override
     public void init() {
@@ -227,6 +232,7 @@ public class DefaultMemoryCache implements CacheFacade {
             if (cachedEntry.state >= 0) {
                 cachedEntry.state = -1;
                 memoryCache.remove(cachedEntry.key);
+                recycleBin.recycleEntry(cachedEntry.key, cachedEntry.value);
             }
         } finally {
             cachedEntry.lock.unlockWrite(stamp);

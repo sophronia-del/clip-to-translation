@@ -1,6 +1,7 @@
 package indi.sophronia.tools.cache.impl;
 
 import indi.sophronia.tools.cache.CacheFacade;
+import indi.sophronia.tools.cache.RecycleBin;
 import indi.sophronia.tools.util.MD5;
 import indi.sophronia.tools.util.Rethrow;
 
@@ -10,24 +11,24 @@ import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-public class FileCache implements CacheFacade {
+public class FileCache implements CacheFacade, RecycleBin {
     public FileCache(String fileName) {
-        this.fileName = fileName;
+        this.indexFileName = fileName + ".index";
+        this.dataFileName = fileName + ".data";
     }
 
     private final Map<String, Object> md5Digests = new ConcurrentHashMap<>();
 
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
-    private final String fileName;
+    private final String indexFileName;
+
+    private final String dataFileName;
 
     @Override
     public Set<String> keys(String pattern) {
@@ -75,39 +76,69 @@ public class FileCache implements CacheFacade {
         throw new UnsupportedOperationException();
     }
 
+    @Override
+    public void recycleEntry(String key, Object value) {
+        if (value != null) {
+            saveFileContent(key, value.toString());
+        }
+    }
+
 
     /**
      * File IO
      */
-    private static class DataChunk {
-        static final int fileHeaderSize = 4;
+    private static class DataSize {
+        static final int indexCountSize = Integer.BYTES;
+        static final int indexFileHeaderSize = indexCountSize;
 
-        static final int keyHeaderSize = 4;
-        static final int valueHeaderSize = 4;
-        static final int maxKeyLength = 1024;
-        static final int maxValueLength = 1024;
-        static final long chunkSize =
-                keyHeaderSize + valueHeaderSize +
-                        maxKeyLength + maxValueLength;
+
+        // index row -> key_length int, key byte(512), offset long
+        static final int indexKeyLength = Integer.BYTES;
+        static final int indexMaxKeyLength = 512;
+        static final int indexCursorSize = Long.BYTES;
+        static final long indexRowLength = indexKeyLength + indexMaxKeyLength + indexCursorSize;
+
+        // data row -> value_length int, value text(variable)
+        static final int valueHeaderSize = Integer.BYTES;
+
+        static final ByteBuffer[] swapBuffers = new ByteBuffer[]{
+                ByteBuffer.wrap(new byte[(int) (indexRowLength)]),
+                ByteBuffer.wrap(new byte[(int) (2 * indexRowLength)]),
+                ByteBuffer.wrap(new byte[(int) (4 * indexRowLength)]),
+                ByteBuffer.wrap(new byte[(int) (8 * indexRowLength)]),
+                ByteBuffer.wrap(new byte[(int) (16 * indexRowLength)]),
+                ByteBuffer.wrap(new byte[(int) (32 * indexRowLength)]),
+        };
     }
 
     private String readFileContent(String key) {
         try {
             lock.readLock().lock();
-            try (FileChannel fileChannel = FileChannel.open(Path.of(fileName), StandardOpenOption.READ)) {
+
+            long dataCursor;
+            try (FileChannel fileChannel = FileChannel.open(Path.of(indexFileName), StandardOpenOption.READ)) {
                 int count = countOfKeys(fileChannel);
 
-                long keyOffset = offsetOfKey(fileChannel, count, key);
-                if (keyOffset < 0) {
+                dataCursor = indexOf(fileChannel, count, key);
+                if (dataCursor < 0) {
                     return null;
                 }
+            }
 
-                fileChannel.position(keyOffset + DataChunk.keyHeaderSize + DataChunk.maxKeyLength);
-                byte[] valueHeader = new byte[DataChunk.valueHeaderSize];
-                byte[] valueContainer = new byte[DataChunk.maxValueLength];
-                fileChannel.read(new ByteBuffer[]{ByteBuffer.wrap(valueHeader), ByteBuffer.wrap(valueContainer)});
+            try (FileChannel fileChannel = FileChannel.open(Path.of(dataFileName), StandardOpenOption.READ)) {
+                fileChannel.position(dataCursor);
+                byte[] valueHeader = new byte[DataSize.valueHeaderSize];
+                if (fileChannel.read(ByteBuffer.wrap(valueHeader)) < DataSize.valueHeaderSize) {
+                    throw new IOException("fail to read cache file");
+                }
+
                 int valueLength = bytesToInt(valueHeader);
-                return new String(valueContainer, 0, valueLength);
+                byte[] valueContainer = new byte[valueLength];
+                if (fileChannel.read(ByteBuffer.wrap(valueContainer)) < valueLength) {
+                    throw new IOException("fail to read cache file");
+                }
+
+                return new String(valueContainer, StandardCharsets.UTF_8);
             }
         } catch (IOException e) {
             throw Rethrow.rethrow(e);
@@ -124,49 +155,87 @@ public class FileCache implements CacheFacade {
         try {
             lock.writeLock().lock();
 
-            try (FileChannel fileChannel = FileChannel.open(
-                    Path.of(fileName),
-                    Set.of(StandardOpenOption.APPEND, StandardOpenOption.READ)
-            )) {
-                int count = countOfKeys(fileChannel);
-                long keyOffset = offsetOfKey(fileChannel, count, key);
-                if (keyOffset >= 0) {
-                    byte[] valueHeader = new byte[DataChunk.valueHeaderSize];
-                    byte[] valueBytes = value.getBytes(StandardCharsets.UTF_8);
+            int totalCount;
+            int indexRowId;
+            try (FileChannel indexChannel = FileChannel.open(Path.of(indexFileName), StandardOpenOption.READ)) {
+                totalCount = countOfKeys(indexChannel);
 
-                    intToBytes(valueBytes.length, valueHeader);
-                    long offset = keyOffset + DataChunk.keyHeaderSize + DataChunk.maxKeyLength;
-                    fileChannel.write(ByteBuffer.wrap(valueHeader), offset);
-
-                    offset += DataChunk.valueHeaderSize;
-                    fileChannel.write(ByteBuffer.wrap(valueBytes), offset);
+                long dataCursor = indexOf(indexChannel, totalCount, key);
+                if (dataCursor >= 0) {
                     return;
                 }
 
+                indexRowId = (int) -dataCursor;
+            }
 
-                byte[] fileHeader = new byte[DataChunk.fileHeaderSize];
-                intToBytes(count + 1, fileHeader);
+            long cursor;
+            try (FileChannel fileChannel = FileChannel.open(
+                    Path.of(dataFileName),
+                    Set.of(StandardOpenOption.APPEND, StandardOpenOption.READ)
+            )) {
+                cursor = fileChannel.position();
+                byte[] fileHeader = new byte[DataSize.indexCountSize];
+                intToBytes(totalCount + 1, fileHeader);
                 fileChannel.write(ByteBuffer.wrap(fileHeader), 0);
 
-                byte[] keyHeader = new byte[DataChunk.keyHeaderSize];
-                byte[] keyContainer = key.getBytes(StandardCharsets.UTF_8);
-                byte[] valueHeader = new byte[DataChunk.valueHeaderSize];
+                byte[] valueHeader = new byte[DataSize.valueHeaderSize];
                 byte[] valueContainer = value.getBytes(StandardCharsets.UTF_8);
 
-                intToBytes(keyContainer.length, keyHeader);
                 intToBytes(valueContainer.length, valueHeader);
 
-                long tail = DataChunk.fileHeaderSize + count * DataChunk.chunkSize;
-                fileChannel.position(tail);
                 fileChannel.write(new ByteBuffer[]{
-                        ByteBuffer.wrap(keyHeader),
-                        ByteBuffer.wrap(keyContainer),
                         ByteBuffer.wrap(valueHeader),
                         ByteBuffer.wrap(valueContainer)
                 });
+            }
 
-                // todo data swap
-                long nextOffset = offsetOfNextKey(fileChannel, count, key);
+            try (FileChannel fileChannel = FileChannel.open(
+                    Path.of(indexFileName),
+                    Set.of(StandardOpenOption.APPEND, StandardOpenOption.READ)
+            )) {
+                fileChannel.position(0);
+                byte[] fileHeader = new byte[DataSize.indexCountSize];
+                intToBytes(totalCount + 1, fileHeader);
+                fileChannel.write(ByteBuffer.wrap(fileHeader), 0);
+
+                byte[] keyHeader = new byte[DataSize.indexKeyLength];
+                byte[] keyContainer = key.getBytes(StandardCharsets.UTF_8);
+                byte[] cursorContainer = new byte[DataSize.indexCursorSize];
+
+                // todo swap index rows
+                int diff = totalCount - 1 - indexRowId;
+                if (diff > 0) {
+                    int batchShift = Math.min(Integer.numberOfTrailingZeros(diff), 5);
+                    int batchSize = 1 << batchShift;
+                    int destinationRowId = totalCount - 1 - batchSize;
+
+                    while (diff > 0) {
+                        batchShift = Math.min(Integer.numberOfTrailingZeros(diff), 5);
+                        batchSize = 1 << batchShift;
+
+                        long sourcePosition = DataSize.indexFileHeaderSize +
+                                (destinationRowId - 1) * DataSize.indexRowLength;
+                        fileChannel.position(sourcePosition);
+
+                        fileChannel.read(DataSize.swapBuffers[batchShift]);
+                        fileChannel.position(sourcePosition + DataSize.indexRowLength);
+                        fileChannel.write(DataSize.swapBuffers[batchShift]);
+
+                        diff -= batchSize;
+                        destinationRowId += batchSize;
+                    }
+                }
+
+                intToBytes(keyContainer.length, keyHeader);
+                longToBytes(cursor, cursorContainer);
+
+                fileChannel.position(DataSize.indexFileHeaderSize +
+                        (indexRowId - 1) * DataSize.indexRowLength);
+                fileChannel.write(new ByteBuffer[]{
+                        ByteBuffer.wrap(keyHeader),
+                        ByteBuffer.wrap(keyContainer),
+                        ByteBuffer.wrap(cursorContainer)
+                });
             }
         } catch (IOException e) {
             throw Rethrow.rethrow(e);
@@ -176,9 +245,9 @@ public class FileCache implements CacheFacade {
     }
 
     private static int countOfKeys(FileChannel fileChannel) throws IOException {
-        byte[] fileHeader = new byte[DataChunk.fileHeaderSize];
+        byte[] fileHeader = new byte[DataSize.indexCountSize];
         int n = fileChannel.read(ByteBuffer.wrap(fileHeader));
-        if (n < DataChunk.fileHeaderSize) {
+        if (n < DataSize.indexCountSize) {
             return 0;
         }
 
@@ -186,84 +255,76 @@ public class FileCache implements CacheFacade {
     }
 
     /**
-     * @return starting position of the row which the key belongs to. -1 if not found
+     * if key exists in the index file, returns its cursor value;
+     * otherwise returns negative value of its possible row id.
+     * behavior is similar to {@link Arrays#binarySearch}
      */
-    private static long offsetOfKey(FileChannel fileChannel, int totalCount, String key) throws IOException {
-        byte[] keyHeader = new byte[DataChunk.keyHeaderSize];
-        byte[] keyContainer = new byte[DataChunk.maxKeyLength];
+    private static long indexOf(FileChannel fileChannel, int totalCount, String key) throws IOException {
+        byte[] keyHeader = new byte[DataSize.indexKeyLength];
+        byte[] keyContainer = new byte[DataSize.indexMaxKeyLength];
+        byte[] cursorContainer = new byte[DataSize.indexCursorSize];
 
-        for (int low = 0, high = totalCount - 1, mid = (low + high) / 2;
-             low < high; mid = (low + high) / 2) {
-            long offset = DataChunk.fileHeaderSize + mid * DataChunk.chunkSize;
-            int n = fileChannel.read(ByteBuffer.wrap(keyHeader), offset);
-            if (n != DataChunk.keyHeaderSize) {
-                throw new IOException("fail to read content of the cache file");
-            }
+        int low = 0;
+        int high = totalCount - 1;
 
-            offset += DataChunk.keyHeaderSize;
+        while (low <= high) {
+            int mid = (low + high) >>> 1;
+            long offset = DataSize.indexFileHeaderSize + mid * DataSize.indexRowLength;
+            fileChannel.position(offset);
+            fileChannel.read(new ByteBuffer[]{
+                    ByteBuffer.wrap(keyHeader),
+                    ByteBuffer.wrap(keyContainer),
+                    ByteBuffer.wrap(cursorContainer)
+            });
+
             int keyLength = bytesToInt(keyHeader);
-            fileChannel.read(ByteBuffer.wrap(keyContainer), offset);
+            String indexKey = new String(
+                    keyContainer, 0, keyLength,
+                    StandardCharsets.UTF_8
+            );
 
-            String contentKey = new String(keyContainer, 0, keyLength);
-            int cmp = contentKey.compareTo(key);
+            int cmp = indexKey.compareTo(key);
             if (cmp == 0) {
-                return DataChunk.fileHeaderSize + mid * DataChunk.chunkSize;
+                return bytesToLong(cursorContainer);
             }
 
-            if (cmp > 0) {
-                high = mid - 1;
-            } else {
+            if (cmp < 0)
                 low = mid + 1;
-            }
+            else
+                high = mid - 1;
         }
 
-        return -1;
-    }
-
-    private static long offsetOfNextKey(FileChannel fileChannel, int totalCount, String key) throws IOException {
-        byte[] keyHeader = new byte[DataChunk.keyHeaderSize];
-        byte[] keyContainer = new byte[DataChunk.maxKeyLength];
-
-        for (int low = 0, high = totalCount - 1, mid = (low + high) / 2;
-             low < high; mid = (low + high) / 2) {
-            long offset = DataChunk.fileHeaderSize + mid * DataChunk.chunkSize;
-            int n = fileChannel.read(ByteBuffer.wrap(keyHeader), offset);
-            if (n != DataChunk.keyHeaderSize) {
-                throw new IOException("fail to read content of the cache file");
-            }
-
-            offset += DataChunk.keyHeaderSize;
-            int keyLength = bytesToInt(keyHeader);
-            fileChannel.read(ByteBuffer.wrap(keyContainer), offset);
-
-            String contentKey = new String(keyContainer, 0, keyLength);
-            int cmp = contentKey.compareTo(key);
-            if (cmp == 0) {
-                return DataChunk.fileHeaderSize + mid * DataChunk.chunkSize;
-            }
-
-            if (cmp > 0) {
-                high = mid - 1;
-            } else {
-                low = mid + 1;
-            }
-        }
-
-        return DataChunk.keyHeaderSize;
+        return -(low + 1);
     }
 
     private static int bytesToInt(byte[] bytes) {
-        int i = 0;
-        for (byte b : bytes) {
-            i <<= Byte.SIZE;
-            i |= b;
+        int v = 0;
+        for (int i = 0; i < Integer.BYTES; i++) {
+            v <<= Byte.SIZE;
+            v |= bytes[i];
         }
-        return i;
+        return v;
     }
 
     private static void intToBytes(int v, byte[] bytes) {
-        for (int i = 0; i < 4; i++) {
-            bytes[3 - i] = (byte) (v & 0xFF);
+        for (int i = 0; i < Integer.BYTES; i++) {
+            bytes[Integer.BYTES - 1 - i] = (byte) (v & 0xFF);
+            v >>= 8;
+        }
+    }
+
+    private static long bytesToLong(byte[] bytes) {
+        long v = 0;
+        for (int i = 0; i < Long.BYTES; i++) {
+            v <<= Byte.SIZE;
+            v |= bytes[i];
+        }
+        return v;
+    }
+
+    private static void longToBytes(long v, byte[] bytes) {
+        for (int i = 0; i < Long.BYTES; i++) {
+            bytes[Long.BYTES - 1 - i] = (byte) (v & 0xFF);
             v >>= 8;
         }
     }
