@@ -20,8 +20,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 public class FileCache implements CacheFacade, RecycleBin {
     // todo load keys on init
     public FileCache(String fileName) {
-        this.indexFileName = fileName + ".index";
-        this.dataFileName = fileName + ".data";
+        this.indexFileName = fileName + ".index.kvdb";
+        this.dataFileName = fileName + ".data.kvdb";
     }
 
     private final Map<String, Object> md5Digests = new ConcurrentHashMap<>();

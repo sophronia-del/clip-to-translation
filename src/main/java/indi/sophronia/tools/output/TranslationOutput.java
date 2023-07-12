@@ -5,19 +5,21 @@ import indi.sophronia.tools.cache.impl.FileCache;
 import indi.sophronia.tools.endpoint.TranslationApiEndpoint;
 import indi.sophronia.tools.util.PackageScan;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Modifier;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
 public class TranslationOutput extends OutputStream {
-    public TranslationOutput(Properties properties) throws IOException {
+    public TranslationOutput(Properties properties, Charset charset) throws IOException {
         FileCache fileCache = new FileCache(
-                properties.getProperty("cache.file", "cache.db")
+                properties.getProperty("cache.file", "cache/cache")
         );
         this.cache.setUpstream(fileCache);
         this.cache.setRecycleBin(fileCache);
@@ -48,11 +50,15 @@ public class TranslationOutput extends OutputStream {
             }
         }
         this.endpoints = translationApiEndpoints.toArray(new TranslationApiEndpoint[0]);
+
+        this.charset = charset;
     }
+
+    private final Charset charset;
 
     private final BufferedCache cache = new BufferedCache();
 
-    private final StringBuilder buffer = new StringBuilder(1024);
+    private final ByteArrayOutputStream buffer = new ByteArrayOutputStream(1024);
 
     private final TranslationApiEndpoint[] endpoints;
 
@@ -64,13 +70,13 @@ public class TranslationOutput extends OutputStream {
 
     @Override
     public void write(int b) {
-        buffer.appendCodePoint(b);
+        buffer.write(b);
     }
 
     @Override
     public void flush() {
-        String data = buffer.toString();
-        buffer.delete(0, buffer.length());
+        String data = buffer.toString(charset);
+        buffer.reset();
 
         String cached = cache.load(data);
         if (cached != null) {

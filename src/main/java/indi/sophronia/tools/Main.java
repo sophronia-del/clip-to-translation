@@ -10,6 +10,7 @@ import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.UnsupportedFlavorException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
@@ -20,11 +21,30 @@ public class Main {
 
         RPC.init(properties);
 
-        try (TranslationOutput translationOutput = new TranslationOutput(properties)) {
+
+        DataFlavor dataFlavor = DataFlavor.getTextPlainUnicodeFlavor();
+
+        Charset charset = Charset.defaultCharset();
+        for (String kv : dataFlavor.getMimeType().split(";")) {
+            String[] pair = kv.split("=");
+            if (pair.length != 2) {
+                continue;
+            }
+            if ("charset".equals(pair[0].trim())) {
+                try {
+                    charset = Charset.forName(pair[1].trim());
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
+        try (TranslationOutput translationOutput = new TranslationOutput(properties, charset)) {
             Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
             clipboard.addFlavorListener(e -> {
                 try {
-                    Object data = clipboard.getData(new DataFlavor("text/plain"));
+                    DataFlavor.getTextPlainUnicodeFlavor().getMimeType();
+                    Object data = clipboard.getData(dataFlavor);
                     if (data instanceof InputStream is) {
                         int c;
                         while ((c = is.read()) != -1) {
@@ -32,7 +52,7 @@ public class Main {
                         }
                         translationOutput.flush();
                     }
-                } catch (UnsupportedFlavorException | IOException | ClassNotFoundException ex) {
+                } catch (UnsupportedFlavorException | IOException ex) {
                     ex.printStackTrace();
                 }
             });
