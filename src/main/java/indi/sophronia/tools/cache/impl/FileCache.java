@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.*;
@@ -17,6 +18,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class FileCache implements CacheFacade, RecycleBin {
+    // todo load keys on init
     public FileCache(String fileName) {
         this.indexFileName = fileName + ".index";
         this.dataFileName = fileName + ".data";
@@ -101,19 +103,32 @@ public class FileCache implements CacheFacade, RecycleBin {
         // data row -> value_length int, value text(variable)
         static final int valueHeaderSize = Integer.BYTES;
 
-        static final ByteBuffer[] swapBuffers = new ByteBuffer[]{
-                ByteBuffer.wrap(new byte[(int) (indexRowLength)]),
-                ByteBuffer.wrap(new byte[(int) (2 * indexRowLength)]),
-                ByteBuffer.wrap(new byte[(int) (4 * indexRowLength)]),
-                ByteBuffer.wrap(new byte[(int) (8 * indexRowLength)]),
-                ByteBuffer.wrap(new byte[(int) (16 * indexRowLength)]),
-                ByteBuffer.wrap(new byte[(int) (32 * indexRowLength)]),
+        static final byte[][] swapBuffers = new byte[][]{
+                new byte[(int) (indexRowLength)],
+                new byte[(int) (2 * indexRowLength)],
+                new byte[(int) (4 * indexRowLength)],
+                new byte[(int) (8 * indexRowLength)],
+                new byte[(int) (16 * indexRowLength)],
+                new byte[(int) (32 * indexRowLength)],
         };
     }
 
     private String readFileContent(String key) {
         try {
             lock.readLock().lock();
+
+            Path indexPath = Path.of(this.indexFileName);
+            Path dataPath = Path.of(this.dataFileName);
+            try {
+                if (!Files.exists(indexPath)) {
+                    Files.createFile(indexPath);
+                }
+                if (!Files.exists(dataPath)) {
+                    Files.createFile(dataPath);
+                }
+            } catch (IOException e) {
+                throw Rethrow.rethrow(e);
+            }
 
             long dataCursor;
             try (FileChannel fileChannel = FileChannel.open(Path.of(indexFileName), StandardOpenOption.READ)) {
@@ -155,6 +170,19 @@ public class FileCache implements CacheFacade, RecycleBin {
         try {
             lock.writeLock().lock();
 
+            Path indexPath = Path.of(this.indexFileName);
+            Path dataPath = Path.of(this.dataFileName);
+            try {
+                if (!Files.exists(indexPath)) {
+                    Files.createFile(indexPath);
+                }
+                if (!Files.exists(dataPath)) {
+                    Files.createFile(dataPath);
+                }
+            } catch (IOException e) {
+                throw Rethrow.rethrow(e);
+            }
+
             int totalCount;
             int indexRowId;
             try (FileChannel indexChannel = FileChannel.open(Path.of(indexFileName), StandardOpenOption.READ)) {
@@ -165,18 +193,15 @@ public class FileCache implements CacheFacade, RecycleBin {
                     return;
                 }
 
-                indexRowId = (int) -dataCursor;
+                indexRowId = (int) -dataCursor - 1;
             }
 
             long cursor;
             try (FileChannel fileChannel = FileChannel.open(
                     Path.of(dataFileName),
-                    Set.of(StandardOpenOption.APPEND, StandardOpenOption.READ)
+                    StandardOpenOption.APPEND
             )) {
                 cursor = fileChannel.position();
-                byte[] fileHeader = new byte[DataSize.indexCountSize];
-                intToBytes(totalCount + 1, fileHeader);
-                fileChannel.write(ByteBuffer.wrap(fileHeader), 0);
 
                 byte[] valueHeader = new byte[DataSize.valueHeaderSize];
                 byte[] valueContainer = value.getBytes(StandardCharsets.UTF_8);
@@ -191,46 +216,49 @@ public class FileCache implements CacheFacade, RecycleBin {
 
             try (FileChannel fileChannel = FileChannel.open(
                     Path.of(indexFileName),
-                    Set.of(StandardOpenOption.APPEND, StandardOpenOption.READ)
+                    Set.of(StandardOpenOption.WRITE, StandardOpenOption.READ)
             )) {
-                fileChannel.position(0);
                 byte[] fileHeader = new byte[DataSize.indexCountSize];
                 intToBytes(totalCount + 1, fileHeader);
-                fileChannel.write(ByteBuffer.wrap(fileHeader), 0);
+                fileChannel.write(ByteBuffer.wrap(fileHeader));
 
-                byte[] keyHeader = new byte[DataSize.indexKeyLength];
-                byte[] keyContainer = key.getBytes(StandardCharsets.UTF_8);
-                byte[] cursorContainer = new byte[DataSize.indexCursorSize];
+                fileChannel.position(fileChannel.size());
+                fileChannel.write(ByteBuffer.wrap(DataSize.swapBuffers[0]));
 
-                // todo swap index rows
-                int diff = totalCount - 1 - indexRowId;
+                int diff = totalCount - indexRowId;
                 if (diff > 0) {
                     int batchShift = Math.min(Integer.numberOfTrailingZeros(diff), 5);
                     int batchSize = 1 << batchShift;
-                    int destinationRowId = totalCount - 1 - batchSize;
+                    int destinationRowId = totalCount - batchSize;
 
                     while (diff > 0) {
                         batchShift = Math.min(Integer.numberOfTrailingZeros(diff), 5);
                         batchSize = 1 << batchShift;
 
                         long sourcePosition = DataSize.indexFileHeaderSize +
-                                (destinationRowId - 1) * DataSize.indexRowLength;
+                                destinationRowId * DataSize.indexRowLength;
                         fileChannel.position(sourcePosition);
-
-                        fileChannel.read(DataSize.swapBuffers[batchShift]);
+                        fileChannel.read(ByteBuffer.wrap(DataSize.swapBuffers[batchShift]));
                         fileChannel.position(sourcePosition + DataSize.indexRowLength);
-                        fileChannel.write(DataSize.swapBuffers[batchShift]);
+                        fileChannel.write(ByteBuffer.wrap(DataSize.swapBuffers[batchShift]));
 
                         diff -= batchSize;
-                        destinationRowId += batchSize;
+                        destinationRowId -= batchSize;
                     }
                 }
 
-                intToBytes(keyContainer.length, keyHeader);
+                byte[] keyHeader = new byte[DataSize.indexKeyLength];
+                byte[] keyContainer = new byte[DataSize.indexMaxKeyLength];
+                byte[] cursorContainer = new byte[DataSize.indexCursorSize];
+
+                byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+                System.arraycopy(keyBytes, 0, keyContainer, 0, keyBytes.length);
+
+                intToBytes(keyBytes.length, keyHeader);
                 longToBytes(cursor, cursorContainer);
 
                 fileChannel.position(DataSize.indexFileHeaderSize +
-                        (indexRowId - 1) * DataSize.indexRowLength);
+                        indexRowId * DataSize.indexRowLength);
                 fileChannel.write(new ByteBuffer[]{
                         ByteBuffer.wrap(keyHeader),
                         ByteBuffer.wrap(keyContainer),

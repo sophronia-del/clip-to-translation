@@ -79,16 +79,26 @@ public class TranslationOutput extends OutputStream {
         }
 
         String translated = null;
-        for (TranslationApiEndpoint endpoint : endpoints) {
+        int index = -1;
+        for (int i = 0; i < endpoints.length; i++) {
             try {
-                translated = endpoint.translate(data);
+                translated = endpoints[i].translate(data);
                 if (translated != null) {
+                    index = i;
                     break;
                 }
             } catch (IOException e) {
-                endpoint.onFail();
+                endpoints[i].onFail();
                 System.err.println(e.getMessage());
                 e.printStackTrace();
+            }
+        }
+
+        if (index > 0) {
+            synchronized (endpoints) {
+                TranslationApiEndpoint success = endpoints[index];
+                System.arraycopy(endpoints, 0, endpoints, index, endpoints.length - index);
+                endpoints[0] = success;
             }
         }
 

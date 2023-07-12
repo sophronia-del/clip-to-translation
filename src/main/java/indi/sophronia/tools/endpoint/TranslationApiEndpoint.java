@@ -20,6 +20,6 @@ public abstract class TranslationApiEndpoint {
     protected abstract String doTranslate(String source) throws IOException;
 
     public void onFail() {
-        invalidateUntil = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(5);
+        invalidateUntil = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10);
     }
 }
