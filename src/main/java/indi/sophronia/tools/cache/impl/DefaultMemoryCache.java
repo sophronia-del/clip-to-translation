@@ -1,9 +1,12 @@
 package indi.sophronia.tools.cache.impl;
 
 import indi.sophronia.tools.cache.CacheFacade;
-import indi.sophronia.tools.cache.RecycleBin;
+import indi.sophronia.tools.util.StringHelper;
 
-import java.util.*;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.StampedLock;
@@ -25,22 +28,16 @@ public class DefaultMemoryCache implements CacheFacade {
     }
 
     public DefaultMemoryCache() {
-        this.recycleBin = RecycleBin.empty();
         this.init = new AtomicBoolean(false);
         this.destroy = new AtomicBoolean(false);
         this.memoryCache = new ConcurrentHashMap<>();
         this.cacheCleaner = Executors.newSingleThreadScheduledExecutor();
     }
 
-    private RecycleBin recycleBin;
     private final AtomicBoolean init;
     private final AtomicBoolean destroy;
     private final ConcurrentMap<String, CachedEntry> memoryCache;
     private final ScheduledExecutorService cacheCleaner;
-
-    public void setRecycleBin(RecycleBin recycleBin) {
-        this.recycleBin = recycleBin;
-    }
 
     @Override
     public void init() {
@@ -77,7 +74,7 @@ public class DefaultMemoryCache implements CacheFacade {
         }
 
         Set<String> keys = new HashSet<>(memoryCache.keySet());
-        filterKeysByPattern(keys, pattern);
+        StringHelper.filterKeysByPattern(keys, pattern);
         return keys;
     }
 
@@ -232,27 +229,9 @@ public class DefaultMemoryCache implements CacheFacade {
             if (cachedEntry.state >= 0) {
                 cachedEntry.state = -1;
                 memoryCache.remove(cachedEntry.key);
-                recycleBin.recycleEntry(cachedEntry.key, cachedEntry.value);
             }
         } finally {
             cachedEntry.lock.unlockWrite(stamp);
         }
-    }
-
-    private static void filterKeysByPattern(Set<String> keys, String pattern) {
-        String[] parts = pattern.split("\\*");
-        keys.removeIf(s -> {
-            int cursor = 0;
-            for (String part : parts) {
-                if (part.isEmpty()) {
-                    continue;
-                }
-                cursor = s.indexOf(part, cursor);
-                if (cursor < 0) {
-                    return true;
-                }
-            }
-            return false;
-        });
     }
 }

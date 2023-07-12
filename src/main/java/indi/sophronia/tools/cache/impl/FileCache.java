@@ -1,8 +1,7 @@
 package indi.sophronia.tools.cache.impl;
 
 import indi.sophronia.tools.cache.CacheFacade;
-import indi.sophronia.tools.cache.RecycleBin;
-import indi.sophronia.tools.util.MD5;
+import indi.sophronia.tools.util.StringHelper;
 import indi.sophronia.tools.util.Rethrow;
 
 import java.io.IOException;
@@ -17,8 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-public class FileCache implements CacheFacade, RecycleBin {
-    // todo load keys on init
+// fixme index file
+public class FileCache implements CacheFacade {
     public FileCache(String fileName) {
         this.indexFileName = fileName + ".index.kvdb";
         this.dataFileName = fileName + ".data.kvdb";
@@ -34,7 +33,9 @@ public class FileCache implements CacheFacade, RecycleBin {
 
     @Override
     public Set<String> keys(String pattern) {
-        return Collections.emptySet();
+        Set<String> allKeys = new HashSet<>(List.of(readAllKeys()));
+        StringHelper.filterKeysByPattern(allKeys, pattern);
+        return allKeys;
     }
 
     @Override
@@ -45,7 +46,7 @@ public class FileCache implements CacheFacade, RecycleBin {
     @Override
     public <T> void savePersist(String key, T value) {
         saveFileContent(key, value.toString());
-        md5Digests.put(MD5.digest(key), "");
+        md5Digests.put(StringHelper.digest(key), "");
     }
 
     @Override
@@ -61,7 +62,7 @@ public class FileCache implements CacheFacade, RecycleBin {
     @SuppressWarnings("unchecked")
     @Override
     public <T> T load(String key) {
-        String digest = MD5.digest(key);
+        String digest = StringHelper.digest(key);
         if (md5Digests.containsKey(digest)) {
             return (T) readFileContent(key);
         }
@@ -76,13 +77,6 @@ public class FileCache implements CacheFacade, RecycleBin {
     @Override
     public void invalidateBatch(Collection<String> keys) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recycleEntry(String key, Object value) {
-        if (value != null) {
-            saveFileContent(key, value.toString());
-        }
     }
 
 
@@ -113,22 +107,72 @@ public class FileCache implements CacheFacade, RecycleBin {
         };
     }
 
-    private String readFileContent(String key) {
+    @Override
+    public void init() {
+        Path indexPath = Path.of(this.indexFileName);
+        Path dataPath = Path.of(this.dataFileName);
+        try {
+            if (!Files.exists(indexPath)) {
+                Files.createFile(indexPath);
+            }
+            if (!Files.exists(dataPath)) {
+                Files.createFile(dataPath);
+            }
+        } catch (IOException e) {
+            throw Rethrow.rethrow(e);
+        }
+
+        String[] keys = readAllKeys();
+        for (String key : keys) {
+            md5Digests.put(StringHelper.digest(key), "");
+        }
+    }
+
+    @Override
+    public void destroy() {
+        CacheFacade.super.destroy();
+    }
+
+    private String[] readAllKeys() {
         try {
             lock.readLock().lock();
 
-            Path indexPath = Path.of(this.indexFileName);
-            Path dataPath = Path.of(this.dataFileName);
-            try {
-                if (!Files.exists(indexPath)) {
-                    Files.createFile(indexPath);
+            try (FileChannel fileChannel = FileChannel.open(Path.of(indexFileName), StandardOpenOption.READ)) {
+                int count = countOfKeys(fileChannel);
+                if (count == 0) {
+                    return new String[0];
                 }
-                if (!Files.exists(dataPath)) {
-                    Files.createFile(dataPath);
+
+                String[] container = new String[count];
+
+                byte[] keyHeader = new byte[DataSize.indexKeyLength];
+                byte[] keyContainer = new byte[DataSize.indexMaxKeyLength];
+                byte[] cursorContainer = new byte[DataSize.indexCursorSize];
+
+                for (int i = 0; i < count; i++) {
+                    fileChannel.read(new ByteBuffer[]{
+                            ByteBuffer.wrap(keyHeader),
+                            ByteBuffer.wrap(keyContainer),
+                            ByteBuffer.wrap(cursorContainer)
+                    });
+
+                    int length = bytesToInt(keyHeader);
+                    String key = new String(keyContainer, 0, length, StandardCharsets.UTF_8);
+                    container[i] = key;
                 }
-            } catch (IOException e) {
-                throw Rethrow.rethrow(e);
+
+                return container;
             }
+        } catch (IOException e) {
+            throw Rethrow.rethrow(e);
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    private String readFileContent(String key) {
+        try {
+            lock.readLock().lock();
 
             long dataCursor;
             try (FileChannel fileChannel = FileChannel.open(Path.of(indexFileName), StandardOpenOption.READ)) {
@@ -169,19 +213,6 @@ public class FileCache implements CacheFacade, RecycleBin {
 
         try {
             lock.writeLock().lock();
-
-            Path indexPath = Path.of(this.indexFileName);
-            Path dataPath = Path.of(this.dataFileName);
-            try {
-                if (!Files.exists(indexPath)) {
-                    Files.createFile(indexPath);
-                }
-                if (!Files.exists(dataPath)) {
-                    Files.createFile(dataPath);
-                }
-            } catch (IOException e) {
-                throw Rethrow.rethrow(e);
-            }
 
             int totalCount;
             int indexRowId;
@@ -329,7 +360,7 @@ public class FileCache implements CacheFacade, RecycleBin {
         int v = 0;
         for (int i = 0; i < Integer.BYTES; i++) {
             v <<= Byte.SIZE;
-            v |= bytes[i];
+            v |= Byte.toUnsignedInt(bytes[i]);
         }
         return v;
     }
@@ -345,7 +376,7 @@ public class FileCache implements CacheFacade, RecycleBin {
         long v = 0;
         for (int i = 0; i < Long.BYTES; i++) {
             v <<= Byte.SIZE;
-            v |= bytes[i];
+            v |= Byte.toUnsignedLong(bytes[i]);
         }
         return v;
     }

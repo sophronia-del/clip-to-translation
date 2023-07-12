@@ -22,7 +22,6 @@ public class TranslationOutput extends OutputStream {
                 properties.getProperty("cache.file", "cache/cache")
         );
         this.cache.setUpstream(fileCache);
-        this.cache.setRecycleBin(fileCache);
         this.cache.setAsyncUpdateUpstream(true);
         this.cache.init();
 
@@ -77,6 +76,10 @@ public class TranslationOutput extends OutputStream {
     public void flush() {
         String data = buffer.toString(charset);
         buffer.reset();
+
+        if (data.isEmpty()) {
+            return;
+        }
 
         String cached = cache.load(data);
         if (cached != null) {

@@ -4,6 +4,7 @@ import indi.sophronia.tools.util.RPC;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
@@ -33,6 +34,6 @@ public class GptEndpoint extends TranslationApiEndpoint {
                 Map.class
         );
 
-        return (String) response.get("response");
+        return (String) ((Map<?, ?>) ((List<?>) response.get("choices")).get(0)).get("text");
     }
 }

@@ -3,11 +3,10 @@ package indi.sophronia.tools;
 import indi.sophronia.tools.output.TranslationOutput;
 import indi.sophronia.tools.util.Property;
 import indi.sophronia.tools.util.RPC;
+import org.jetbrains.annotations.NotNull;
 
 import java.awt.*;
-import java.awt.datatransfer.Clipboard;
-import java.awt.datatransfer.DataFlavor;
-import java.awt.datatransfer.UnsupportedFlavorException;
+import java.awt.datatransfer.*;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.Charset;
@@ -15,7 +14,9 @@ import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
-public class Main {
+public enum Main implements ClipboardOwner {
+    INSTANCE;
+
     public static void main(String[] args) throws IOException {
         Properties properties = Property.properties();
 
@@ -43,15 +44,20 @@ public class Main {
             Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
             clipboard.addFlavorListener(e -> {
                 try {
-                    DataFlavor.getTextPlainUnicodeFlavor().getMimeType();
-                    Object data = clipboard.getData(dataFlavor);
-                    if (data instanceof InputStream is) {
+                    if (!clipboard.isDataFlavorAvailable(dataFlavor)) {
+                        return;
+                    }
+
+                    Object fromText = clipboard.getData(dataFlavor);
+                    if (fromText instanceof InputStream is) {
                         int c;
                         while ((c = is.read()) != -1) {
                             translationOutput.write(c);
                         }
                         translationOutput.flush();
                     }
+
+                    clipboard.setContents(EmptyContent.INSTANCE, INSTANCE);
                 } catch (UnsupportedFlavorException | IOException ex) {
                     ex.printStackTrace();
                 }
@@ -60,6 +66,35 @@ public class Main {
             while (true) {
                 LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(100));
             }
+        }
+    }
+
+    @Override
+    public void lostOwnership(Clipboard clipboard, Transferable contents) {
+        try {
+            clipboard.setContents(clipboard.getContents(null), INSTANCE);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private enum EmptyContent implements Transferable {
+        INSTANCE;
+
+        @Override
+        public DataFlavor[] getTransferDataFlavors() {
+            return new DataFlavor[0];
+        }
+
+        @Override
+        public boolean isDataFlavorSupported(DataFlavor flavor) {
+            return false;
+        }
+
+        @NotNull
+        @Override
+        public Object getTransferData(DataFlavor flavor) {
+            return "";
         }
     }
 }
