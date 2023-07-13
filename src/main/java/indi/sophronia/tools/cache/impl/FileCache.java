@@ -1,8 +1,8 @@
 package indi.sophronia.tools.cache.impl;
 
 import indi.sophronia.tools.cache.CacheFacade;
-import indi.sophronia.tools.util.StringHelper;
 import indi.sophronia.tools.util.Rethrow;
+import indi.sophronia.tools.util.StringHelper;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -16,7 +16,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-// fixme index file
 public class FileCache implements CacheFacade {
     public FileCache(String fileName) {
         this.indexFileName = fileName + ".index.kvdb";
@@ -109,15 +108,9 @@ public class FileCache implements CacheFacade {
 
     @Override
     public void init() {
-        Path indexPath = Path.of(this.indexFileName);
-        Path dataPath = Path.of(this.dataFileName);
         try {
-            if (!Files.exists(indexPath)) {
-                Files.createFile(indexPath);
-            }
-            if (!Files.exists(dataPath)) {
-                Files.createFile(dataPath);
-            }
+            ensureFile(this.indexFileName);
+            ensureFile(this.dataFileName);
         } catch (IOException e) {
             throw Rethrow.rethrow(e);
         }
@@ -125,6 +118,29 @@ public class FileCache implements CacheFacade {
         String[] keys = readAllKeys();
         for (String key : keys) {
             md5Digests.put(StringHelper.digest(key), "");
+        }
+    }
+
+    private static void ensureFile(String filePath) throws IOException {
+        Path path = Path.of(filePath);
+
+        StringBuilder buffer = new StringBuilder(filePath.length());
+        Iterator<Path> iterator = path.normalize().iterator();
+        while (iterator.hasNext()) {
+            buffer.append(iterator.next().toString());
+            Path current = Path.of(buffer.toString());
+
+            if (!Files.exists(current)) {
+                if (iterator.hasNext()) {
+                    Files.createDirectory(current);
+                } else {
+                    Files.createFile(current);
+                }
+            }
+
+            if (iterator.hasNext()) {
+                buffer.append("/");
+            }
         }
     }
 
@@ -258,16 +274,13 @@ public class FileCache implements CacheFacade {
 
                 int diff = totalCount - indexRowId;
                 if (diff > 0) {
-                    int batchShift = Math.min(Integer.numberOfTrailingZeros(diff), 5);
-                    int batchSize = 1 << batchShift;
-                    int destinationRowId = totalCount - batchSize;
-
+                    int destinationRowId = totalCount;
                     while (diff > 0) {
-                        batchShift = Math.min(Integer.numberOfTrailingZeros(diff), 5);
-                        batchSize = 1 << batchShift;
+                        int batchShift = Math.min(Integer.numberOfTrailingZeros(diff), 5);
+                        int batchSize = 1 << batchShift;
 
                         long sourcePosition = DataSize.indexFileHeaderSize +
-                                destinationRowId * DataSize.indexRowLength;
+                                (destinationRowId - batchSize) * DataSize.indexRowLength;
                         fileChannel.position(sourcePosition);
                         fileChannel.read(ByteBuffer.wrap(DataSize.swapBuffers[batchShift]));
                         fileChannel.position(sourcePosition + DataSize.indexRowLength);
