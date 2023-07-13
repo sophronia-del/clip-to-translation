@@ -1,6 +1,5 @@
 package indi.sophronia.tools.cache.impl;
 
-import com.google.common.collect.Sets;
 import indi.sophronia.tools.cache.CacheFacade;
 
 import java.util.*;
@@ -61,7 +60,8 @@ public class BufferedCache extends DefaultMemoryCache {
         Map<String, T> inMemory = super.loadBatch(keys);
 
         Set<String> inKeys = keys instanceof Set ? (Set<String>) keys : new HashSet<>(keys);
-        Set<String> missing = Sets.difference(inKeys, inMemory.keySet()).immutableCopy();
+        Set<String> missing = new HashSet<>(inKeys);
+        missing.removeAll(inMemory.keySet());
 
         Map<String, T> fromRemote = upstream.loadBatch(missing);
         saveBatch(fromRemote, EXPIRE_FOR_BUFFER);

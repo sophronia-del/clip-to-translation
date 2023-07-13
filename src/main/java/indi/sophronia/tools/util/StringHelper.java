@@ -1,7 +1,6 @@
 package indi.sophronia.tools.util;
 
-import com.google.common.base.Charsets;
-
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Set;
@@ -18,7 +17,7 @@ public class StringHelper {
     }
 
     public static String digest(String data) {
-        return new String(DIGEST.digest(data.getBytes(Charsets.UTF_8)));
+        return new String(DIGEST.digest(data.getBytes(StandardCharsets.UTF_8)));
     }
 
     public static void filterKeysByPattern(Set<String> keys, String pattern) {
