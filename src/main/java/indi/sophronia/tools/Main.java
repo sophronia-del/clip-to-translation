@@ -9,6 +9,7 @@ import java.awt.*;
 import java.awt.datatransfer.*;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintStream;
 import java.nio.charset.Charset;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
@@ -21,6 +22,8 @@ public enum Main implements ClipboardOwner {
         Properties properties = Property.properties();
 
         RPC.init(properties);
+
+        System.setErr(new PrintStream(properties.getProperty("error.file", "error.log")));
 
 
         DataFlavor dataFlavor = DataFlavor.getTextPlainUnicodeFlavor();
