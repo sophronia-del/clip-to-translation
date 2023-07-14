@@ -3,16 +3,29 @@ package indi.sophronia.tools.util;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Set;
+import java.util.*;
 
 public class StringHelper {
     private static final MessageDigest DIGEST;
+
+    private static final Language[] LANGUAGE_TABLE;
 
     static {
         try {
             DIGEST = MessageDigest.getInstance("md5");
         } catch (NoSuchAlgorithmException e) {
             throw Rethrow.rethrow(e);
+        }
+
+        LANGUAGE_TABLE = new Language[0x110000];
+        Arrays.fill(LANGUAGE_TABLE, Language.UNKNOWN);
+
+        for (Language value : Language.values()) {
+            for (int i = 0; i < value.rangesBegin.length; i++) {
+                for (int j = value.rangesBegin[i]; j <= value.rangesEnd[i]; j++) {
+                    LANGUAGE_TABLE[j] = value;
+                }
+            }
         }
     }
 
@@ -35,5 +48,20 @@ public class StringHelper {
             }
             return false;
         });
+    }
+
+    public static Language detectLanguage(String source) {
+        EnumMap<Language, Integer> count = new EnumMap<>(Language.class);
+        for (Language value : Language.values()) {
+            count.put(value, 0);
+        }
+
+        source.codePoints().mapToObj(i -> LANGUAGE_TABLE[i]).
+                forEach(l -> count.computeIfPresent(l, (language, integer) -> integer + 1));
+
+        var entries = new ArrayList<>(count.entrySet());
+        entries.sort(Comparator.comparingInt(Map.Entry::getValue));
+        var tail = entries.get(entries.size() - 1);
+        return tail.getValue() == 0 ? Language.UNKNOWN : tail.getKey();
     }
 }

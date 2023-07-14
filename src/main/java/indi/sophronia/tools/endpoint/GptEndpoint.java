@@ -1,5 +1,6 @@
 package indi.sophronia.tools.endpoint;
 
+import indi.sophronia.tools.util.Language;
 import indi.sophronia.tools.util.RPC;
 
 import java.io.IOException;
@@ -18,7 +19,7 @@ public class GptEndpoint extends TranslationApiEndpoint {
     }
 
     @Override
-    protected String doTranslate(String source) throws IOException {
+    protected String doTranslate(String source, Language sourceLanguage, Language targetLanguage) throws IOException {
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model", "text-davinci-001");
         requestBody.put("max_tokens", 256);
@@ -26,7 +27,7 @@ public class GptEndpoint extends TranslationApiEndpoint {
         requestBody.put("top_p", 1);
         requestBody.put("n", 1);
         requestBody.put("stream", false);
-        requestBody.put("prompt", "please translate the following text to Chinese: " + source);
+        requestBody.put("prompt", String.format("please translate the following text to %s: %s", targetLanguage, source));
         Map<String, Object> response = RPC.post(
                 "https://api.openai.com/v1/completions",
                 Map.of("Authorization", "Bearer " + apiKey),

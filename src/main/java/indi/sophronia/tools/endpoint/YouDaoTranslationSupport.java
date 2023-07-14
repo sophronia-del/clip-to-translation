@@ -1,5 +1,6 @@
 package indi.sophronia.tools.endpoint;
 
+import indi.sophronia.tools.util.Language;
 import indi.sophronia.tools.util.RPC;
 
 import java.io.IOException;
@@ -20,11 +21,18 @@ public class YouDaoTranslationSupport extends TranslationApiEndpoint {
     }
 
     @Override
-    protected String doTranslate(String source) throws IOException {
+    protected String doTranslate(String source, Language sourceLanguage, Language targetLanguage) throws IOException {
         Map<String, String> params = new HashMap<>();
         String salt = String.valueOf(System.currentTimeMillis());
-        params.put("from", "auto");
-        params.put("to", "zh-CHS");
+
+        String from = convertLanguage(sourceLanguage);
+        String to = convertLanguage(targetLanguage);
+        if (to == null) {
+            return null;
+        }
+
+        params.put("from", from == null ? "auto" : from);
+        params.put("to", to);
         params.put("signType", "v3");
         String curtime = String.valueOf(System.currentTimeMillis() / 1000);
         params.put("curtime", curtime);
@@ -48,7 +56,7 @@ public class YouDaoTranslationSupport extends TranslationApiEndpoint {
         return (String) ((List<?>) results.get("translation")).get(0);
     }
 
-    public static String getDigest(String string) {
+    private static String getDigest(String string) {
         if (string == null) {
             return null;
         }
@@ -71,11 +79,21 @@ public class YouDaoTranslationSupport extends TranslationApiEndpoint {
         }
     }
 
-    public static String truncate(String q) {
+    private static String truncate(String q) {
         if (q == null) {
             return null;
         }
         int len = q.length();
         return len <= 20 ? q : (q.substring(0, 10) + len + q.substring(len - 10, len));
+    }
+
+    private static String convertLanguage(Language language) {
+        return switch (language) {
+            case CHINESE -> "zh-CHS";
+            case KOREAN -> "ko";
+            case JAPANESE -> "ja";
+            case ENGLISH -> "en";
+            case UNKNOWN -> null;
+        };
     }
 }

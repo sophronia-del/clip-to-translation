@@ -3,7 +3,9 @@ package indi.sophronia.tools.output;
 import indi.sophronia.tools.cache.impl.BufferedCache;
 import indi.sophronia.tools.cache.impl.FileCache;
 import indi.sophronia.tools.endpoint.TranslationApiEndpoint;
+import indi.sophronia.tools.util.Language;
 import indi.sophronia.tools.util.PackageScan;
+import indi.sophronia.tools.util.StringHelper;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -51,6 +53,18 @@ public class TranslationOutput extends OutputStream {
         this.endpoints = translationApiEndpoints.toArray(new TranslationApiEndpoint[0]);
 
         this.charset = charset;
+
+        Language l = Language.CHINESE;
+        String language = properties.getProperty("language.target");
+        if (language != null) {
+            try {
+                l = Language.valueOf(language);
+            } catch (Exception e) {
+                System.err.println("unsupported language: " + language);
+            }
+        }
+
+        this.targetLanguage = l;
     }
 
     private final Charset charset;
@@ -60,6 +74,8 @@ public class TranslationOutput extends OutputStream {
     private final ByteArrayOutputStream buffer = new ByteArrayOutputStream(1024);
 
     private final TranslationApiEndpoint[] endpoints;
+
+    private final Language targetLanguage;
 
     @Override
     public void close() throws IOException {
@@ -87,11 +103,17 @@ public class TranslationOutput extends OutputStream {
             return;
         }
 
+        Language language = StringHelper.detectLanguage(data);
+        if (language == targetLanguage) {
+            System.out.println(data);
+            return;
+        }
+
         String translated = null;
         int index = -1;
         for (int i = 0; i < endpoints.length; i++) {
             try {
-                translated = endpoints[i].translate(data);
+                translated = endpoints[i].translate(data, language, targetLanguage);
                 if (translated != null) {
                     index = i;
                     break;
