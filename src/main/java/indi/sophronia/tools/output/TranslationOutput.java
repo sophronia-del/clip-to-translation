@@ -142,6 +142,8 @@ public class TranslationOutput extends OutputStream {
             if (translated != null) {
                 cache.save(data, translated, TimeUnit.MINUTES.toMillis(1));
                 System.out.println(translated);
+
+                System.err.println("translated by api");
             } else {
                 System.err.println("fail to translate " + data);
                 System.out.println(data);
