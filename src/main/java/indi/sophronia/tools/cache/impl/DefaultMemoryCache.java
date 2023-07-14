@@ -46,7 +46,7 @@ public class DefaultMemoryCache implements CacheFacade {
                     () -> {
                         long timestamp = System.currentTimeMillis();
                         for (CachedEntry value : memoryCache.values()) {
-                            if (value.state > timestamp) {
+                            if (value.state > 0 && value.state < timestamp) {
                                 doRemoveCache(value);
                             }
                         }
