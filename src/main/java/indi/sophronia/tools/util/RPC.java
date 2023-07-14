@@ -76,6 +76,7 @@ public class RPC {
         Request.Builder builder = new Request.Builder();
         builder.url(url);
         headers.forEach(builder::addHeader);
+        builder.addHeader("content-type", "application/x-www-form-urlencoded");
 
         FormBody.Builder bodyBuilder = new FormBody.Builder();
         body.forEach(bodyBuilder::add);

@@ -29,8 +29,8 @@ public class StringHelper {
         }
     }
 
-    public static String digest(String data) {
-        return new String(DIGEST.digest(data.getBytes(StandardCharsets.UTF_8)));
+    public static byte[] digest(String data) {
+        return DIGEST.digest(data.getBytes(StandardCharsets.UTF_8));
     }
 
     public static void filterKeysByPattern(Set<String> keys, String pattern) {

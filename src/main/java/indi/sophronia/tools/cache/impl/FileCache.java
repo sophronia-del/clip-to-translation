@@ -45,7 +45,7 @@ public class FileCache implements CacheFacade {
     @Override
     public <T> void savePersist(String key, T value) {
         saveFileContent(key, value.toString());
-        md5Digests.put(StringHelper.digest(key), "");
+        md5Digests.put(new String(StringHelper.digest(key)), "");
     }
 
     @Override
@@ -61,7 +61,7 @@ public class FileCache implements CacheFacade {
     @SuppressWarnings("unchecked")
     @Override
     public <T> T load(String key) {
-        String digest = StringHelper.digest(key);
+        String digest = new String(StringHelper.digest(key));
         if (md5Digests.containsKey(digest)) {
             return (T) readFileContent(key);
         }
@@ -117,7 +117,7 @@ public class FileCache implements CacheFacade {
 
         String[] keys = readAllKeys();
         for (String key : keys) {
-            md5Digests.put(StringHelper.digest(key), "");
+            md5Digests.put(new String(StringHelper.digest(key)), "");
         }
     }
 
