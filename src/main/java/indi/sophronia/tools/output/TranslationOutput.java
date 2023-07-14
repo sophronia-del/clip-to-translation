@@ -14,6 +14,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Modifier;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
@@ -90,55 +91,61 @@ public class TranslationOutput extends OutputStream {
 
     @Override
     public void flush() {
-        String data = buffer.toString(charset);
+        String source = buffer.toString(charset);
         buffer.reset();
 
-        if (data.isEmpty()) {
-            return;
-        }
+        String[] lines = source.split("\n");
+        for (String data : lines) {
+            if (data.isEmpty()) {
+                continue;
+            }
 
-        String cached = cache.load(data);
-        if (cached != null) {
-            System.out.println(cached);
-            return;
-        }
+            String cached = cache.load(data);
+            if (cached != null) {
+                System.out.println(cached);
+                continue;
+            }
 
-        Language language = StringHelper.detectLanguage(data);
-        if (language == targetLanguage) {
-            System.out.println(data);
-            return;
-        }
+            Language[] languages = StringHelper.detectLanguage(data);
+            Language language = Arrays.stream(languages).
+                    filter(l -> targetLanguage != l).findFirst().orElse(targetLanguage);
 
-        String translated = null;
-        int index = -1;
-        for (int i = 0; i < endpoints.length; i++) {
-            try {
-                translated = endpoints[i].translate(data, language, targetLanguage);
-                if (translated != null) {
-                    index = i;
-                    break;
+            if (language == targetLanguage) {
+                System.out.println(data);
+                continue;
+            }
+
+            String translated = null;
+            int index = -1;
+            for (int i = 0; i < endpoints.length; i++) {
+                try {
+                    translated = endpoints[i].translate(data, language, targetLanguage);
+                    if (translated != null) {
+                        index = i;
+                        break;
+                    }
+                } catch (IOException e) {
+                    endpoints[i].onFail();
+                    System.err.println(e.getMessage());
+                    e.printStackTrace();
                 }
-            } catch (IOException e) {
-                endpoints[i].onFail();
-                System.err.println(e.getMessage());
-                e.printStackTrace();
             }
-        }
 
-        if (index > 0) {
-            synchronized (endpoints) {
-                TranslationApiEndpoint success = endpoints[index];
-                System.arraycopy(endpoints, 0, endpoints, index, endpoints.length - index);
-                endpoints[0] = success;
+            if (index > 0) {
+                synchronized (endpoints) {
+                    TranslationApiEndpoint success = endpoints[index];
+                    System.arraycopy(endpoints, 0, endpoints, index, endpoints.length - index);
+                    endpoints[0] = success;
+                }
             }
-        }
 
-        if (translated != null) {
-            cache.save(data, translated, TimeUnit.MINUTES.toMillis(1));
-            System.out.println(translated);
-        } else {
-            System.err.println("fail to translate " + data);
-            System.out.println(data);
+            if (translated != null) {
+                cache.save(data, translated, TimeUnit.MINUTES.toMillis(1));
+                System.out.println(translated);
+            } else {
+                System.err.println("fail to translate " + data);
+                System.out.println(data);
+            }
         }
     }
 }

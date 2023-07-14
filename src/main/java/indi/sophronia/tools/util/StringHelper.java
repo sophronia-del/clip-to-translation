@@ -50,7 +50,7 @@ public class StringHelper {
         });
     }
 
-    public static Language detectLanguage(String source) {
+    public static Language[] detectLanguage(String source) {
         EnumMap<Language, Integer> count = new EnumMap<>(Language.class);
         for (Language value : Language.values()) {
             count.put(value, 0);
@@ -59,9 +59,14 @@ public class StringHelper {
         source.codePoints().mapToObj(i -> LANGUAGE_TABLE[i]).
                 forEach(l -> count.computeIfPresent(l, (language, integer) -> integer + 1));
 
-        var entries = new ArrayList<>(count.entrySet());
-        entries.sort(Comparator.comparingInt(Map.Entry::getValue));
-        var tail = entries.get(entries.size() - 1);
-        return tail.getValue() == 0 ? Language.UNKNOWN : tail.getKey();
+        Language[] languages = count.entrySet().stream().
+                sorted(Comparator.comparingInt(Map.Entry::getValue)).
+                map(Map.Entry::getKey).toArray(Language[]::new);
+        for (int i = 0; i < languages.length / 2; i++) {
+            Language l = languages[i];
+            languages[i] = languages[languages.length - 1 - i];
+            languages[languages.length - 1 - i] = l;
+        }
+        return languages;
     }
 }

@@ -87,9 +87,9 @@ public class FileCache implements CacheFacade {
         static final int indexFileHeaderSize = indexCountSize;
 
 
-        // index row -> key_length int, key byte(512), offset long
+        // index row -> key_length int, key byte(indexMaxKeyLength), offset long
         static final int indexKeyLength = Integer.BYTES;
-        static final int indexMaxKeyLength = 512;
+        static final int indexMaxKeyLength = 256;
         static final int indexCursorSize = Long.BYTES;
         static final long indexRowLength = indexKeyLength + indexMaxKeyLength + indexCursorSize;
 
@@ -187,6 +187,11 @@ public class FileCache implements CacheFacade {
     }
 
     private String readFileContent(String key) {
+        byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+        if (keyBytes.length > DataSize.indexMaxKeyLength) {
+            return null;
+        }
+
         try {
             lock.readLock().lock();
 
@@ -223,7 +228,8 @@ public class FileCache implements CacheFacade {
     }
 
     private void saveFileContent(String key, String value) {
-        if (key.length() > 512 || value.length() > 512) {
+        byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+        if (keyBytes.length > DataSize.indexMaxKeyLength) {
             return;
         }
 
@@ -295,7 +301,6 @@ public class FileCache implements CacheFacade {
                 byte[] keyContainer = new byte[DataSize.indexMaxKeyLength];
                 byte[] cursorContainer = new byte[DataSize.indexCursorSize];
 
-                byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
                 System.arraycopy(keyBytes, 0, keyContainer, 0, keyBytes.length);
 
                 intToBytes(keyBytes.length, keyHeader);
