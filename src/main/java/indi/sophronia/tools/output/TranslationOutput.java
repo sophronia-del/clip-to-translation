@@ -51,6 +51,11 @@ public class TranslationOutput extends OutputStream {
                 e.printStackTrace();
             }
         }
+
+        if (translationApiEndpoints.isEmpty()) {
+            throw new IllegalStateException("fail to initialize any translation endpoint");
+        }
+
         this.endpoints = translationApiEndpoints.toArray(new TranslationApiEndpoint[0]);
 
         this.charset = charset;

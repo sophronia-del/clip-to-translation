@@ -37,8 +37,7 @@ public enum Main implements ClipboardOwner {
             if ("charset".equals(pair[0].trim())) {
                 try {
                     charset = Charset.forName(pair[1].trim());
-                } catch (Exception e) {
-                    e.printStackTrace();
+                } catch (Exception ignored) {
                 }
             }
         }
@@ -47,22 +46,25 @@ public enum Main implements ClipboardOwner {
             Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
             clipboard.addFlavorListener(e -> {
                 try {
-                    if (!clipboard.isDataFlavorAvailable(dataFlavor)) {
-                        return;
-                    }
-
-                    Object fromText = clipboard.getData(dataFlavor);
-                    if (fromText instanceof InputStream is) {
-                        int c;
-                        while ((c = is.read()) != -1) {
-                            translationOutput.write(c);
+                    Transferable contents = clipboard.getContents(null);
+                    if (contents.isDataFlavorSupported(dataFlavor)) {
+                        Object fromText = contents.getTransferData(dataFlavor);
+                        if (fromText instanceof InputStream is) {
+                            int c;
+                            while ((c = is.read()) != -1) {
+                                translationOutput.write(c);
+                            }
+                            translationOutput.flush();
+                        } else {
+                            System.err.printf("text type: %s\n", fromText.getClass().getName());
                         }
-                        translationOutput.flush();
-                    }
 
-                    clipboard.setContents(EmptyContent.INSTANCE, INSTANCE);
+                        clipboard.setContents(EmptyContent.INSTANCE, INSTANCE);
+                    } else {
+                        clipboard.setContents(contents, INSTANCE);
+                    }
                 } catch (UnsupportedFlavorException | IOException ex) {
-                    ex.printStackTrace();
+                    System.err.println(ex.getMessage());
                 }
             });
 
@@ -77,7 +79,7 @@ public enum Main implements ClipboardOwner {
         try {
             clipboard.setContents(clipboard.getContents(null), INSTANCE);
         } catch (Exception e) {
-            e.printStackTrace();
+            System.err.println(e.getMessage());
         }
     }
 
